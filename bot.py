@@ -508,3 +508,86 @@ if __name__ == '__main__':
         await bot.start(TOKEN)
 
     asyncio.run(main())
+@commands.Cog.listener()
+async def setup(self):
+    pass
+
+# Add these inside your MyBot class
+
+@app_commands.command(name='kick')
+@app_commands.describe(user='User to kick from the game')
+async def kick(self, interaction: discord.Interaction, user: discord.Member):
+    gid = interaction.guild_id or 0
+    if gid not in games:
+        await interaction.response.send_message('No game in progress.', ephemeral=True)
+        return
+    gs = games[gid]
+    # Check if the interaction user is the host (creator)
+    host_id = getattr(gs, 'host_id', None)
+    if host_id != interaction.user.id:
+        await interaction.response.send_message('Only the host can kick players.', ephemeral=True)
+        return
+    # Remove the user from game
+    result = gs.leave_player(user.id)
+    if result:
+        save_game(gid, gs)
+        await interaction.response.send_message(f'{user.display_name} has been kicked from the game.')
+    else:
+        await interaction.response.send_message('User not in game or cannot be kicked.', ephemeral=True)
+
+@app_commands.command(name='cc')  # Transfer captaincy
+@app_commands.describe(new_captain='Member to transfer captaincy to')
+async def cc(self, interaction: discord.Interaction, new_captain: discord.Member):
+    """Transfer your team captaincy to another team member."""
+    gid = interaction.guild_id or 0
+    if gid not in games:
+        await interaction.response.send_message('No lobby/game.', ephemeral=True)
+        return
+    gs = games[gid]
+    caller_team = None
+    for tid, team in gs.teams.items():
+        if team.captain_id == interaction.user.id:
+            caller_team = tid
+            break
+    if caller_team is None:
+        await interaction.response.send_message('You are not a captain on any team.', ephemeral=True)
+        return
+    # ensure target is on the same team
+    if gs.find_team_of_user(new_captain.id) != caller_team:
+        await interaction.response.send_message('Target user is not on your team.', ephemeral=True)
+        return
+    gs.teams[caller_team].captain_id = new_captain.id
+    save_game(gid, gs)
+    await interaction.response.send_message(f'{new_captain.display_name} is now captain of Team {caller_team}.')
+
+@app_commands.command(name='start')
+async def start(self, interaction: discord.Interaction):
+    gid = interaction.guild_id or 0
+    if gid not in games:
+        await interaction.response.send_message('No lobby.', ephemeral=True)
+        return
+    gs = games[gid]
+    ok = gs.start_game(interaction.user.id)
+    if not ok:
+        await interaction.response.send_message('Only host can start the game or teams are not filled.', ephemeral=True)
+        return
+    save_game(gid, gs)
+    await interaction.response.send_message('Game started! Use `/toss` to begin coin toss.')
+
+@app_commands.command(name='join')
+async def join(self, interaction: discord.Interaction):
+    gid = interaction.guild_id or 0
+    if gid not in games:
+        await interaction.response.send_message('No lobby created. Use `/newgame` to create one.', ephemeral=True)
+        return
+    gs = games[gid]
+    # Check if the lobby already has 6 players
+    if len(gs.players) >= 6:
+        await interaction.response.send_message('Lobby is full .', ephemeral=True)
+        return
+    res = gs.join_player(interaction.user.id, interaction.user.display_name)
+    if not res:
+        await interaction.response.send_message('Could not join, maybe you have already joined, or the lobby is full.', ephemeral=True)
+        return
+    save_game(gid, gs)
+    await interaction.response.send_message(f'Joined as {res}.')
