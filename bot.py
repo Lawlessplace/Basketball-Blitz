@@ -270,6 +270,7 @@ class MyBot(commands.Cog):
 
     @app_commands.command(name='newgame')
     async def newgame(self, interaction: discord.Interaction):
+        """Create a new game"""
         gid = interaction.guild_id or 0
         if gid in games and games[gid].active:
             await interaction.response.send_message('A game is already active in this server.', ephemeral=True)
@@ -286,6 +287,7 @@ class MyBot(commands.Cog):
 
     @app_commands.command(name='join')
     async def join(self, interaction: discord.Interaction):
+        """Join the lobby"""
         gid = interaction.guild_id or 0
         if gid not in games:
             await interaction.response.send_message('No lobby. Use `/newgame` to create one.', ephemeral=True)
@@ -300,6 +302,7 @@ class MyBot(commands.Cog):
 
     @app_commands.command(name='leave')
     async def leave(self, interaction: discord.Interaction):
+        """Leave the lobby"""
         gid = interaction.guild_id or 0
         if gid not in games:
             await interaction.response.send_message('No lobby.', ephemeral=True)
@@ -314,6 +317,7 @@ class MyBot(commands.Cog):
 
     @app_commands.command(name='livescore')
     async def livescore(self, interaction: discord.Interaction):
+        """Check the current game status"""
         gid = interaction.guild_id or 0
         if gid not in games:
             await interaction.response.send_message('No game/lobby.', ephemeral=True)
@@ -329,7 +333,7 @@ class MyBot(commands.Cog):
     @app_commands.command(name='cc')
     @app_commands.describe(new_captain='Member to transfer captaincy to')
     async def cc(self, interaction: discord.Interaction, new_captain: discord.Member):
-        """Transfer your team captaincy to another team member."""
+        """Transfer your team captaincy to a player."""
         gid = interaction.guild_id or 0
         if gid not in games:
             await interaction.response.send_message('No lobby/game.', ephemeral=True)
@@ -412,52 +416,11 @@ class MyBot(commands.Cog):
             save_game(gid, gs)
             await interaction.channel.send(f'**Toss Result: {pick.upper()}** → Team {winner} gets possession at PG. Use `/ctn` to start play.')
 
-    @app_commands.command(name='ctn')
-    async def ctn(self, interaction: discord.Interaction):
-        """Continue to next attacker's turn."""
-        gid = interaction.guild_id or 0
-        if gid not in games or not games[gid].active:
-            await interaction.response.send_message('No active game.', ephemeral=True)
-            return
-        gs = games[gid]
-        team = gs.current_possession_team
-        pos = gs.current_attacker_pos
-        if not team or not pos:
-            await interaction.response.send_message('No active possession.', ephemeral=True)
-            return
-        # Check halftime
-        if gs.is_halftime():
-            await interaction.channel.send('**HALFTIME** — Score update:')
-            data = gs.get_livescore()
-            for tid, t in data['teams'].items():
-                await interaction.channel.send(f"Team {tid}: {t['score']}")
-            await interaction.channel.send('Use `/ctn` to resume second half.')
-            await interaction.response.defer()
-            return
-        # Check end of game
-        if not gs.active:
-            data = gs.get_livescore()
-            await interaction.channel.send('**GAME OVER**')
-            for tid, t in data['teams'].items():
-                await interaction.channel.send(f"Team {tid} final score: {t['score']}")
-            if gs.check_overtime_needed():
-                await interaction.channel.send('**SUDDEN DEATH OVERTIME** — Continue with next possession!')
-                gs.move_count = 36  # reset for OT
-                gs.active = True
-                save_game(gid, gs)
-            await interaction.response.defer()
-            return
-        attacker = gs.get_slot(team, pos)
-        if not attacker:
-            await interaction.response.send_message(f'{pos.upper()} not present on Team {team}.', ephemeral=True)
-            return
-        view = AttackerChoiceView.create_for(gs, attacker.user_id, team, pos)
-        await interaction.channel.send(f'<@{attacker.user_id}>, you are attacking as {pos.upper()}. Choose your action.', view=view)
-        await interaction.response.defer()
 
     @app_commands.command(name='sub')
     @app_commands.describe(team='Team number (1 or 2)', position='Position to replace: pg/sg/ce', player='User to sub in')
     async def sub(self, interaction: discord.Interaction, team: int, position: str, player: discord.Member):
+        """Substitute a player in"""
         gid = interaction.guild_id or 0
         if gid not in games:
             await interaction.response.send_message('No lobby/game.', ephemeral=True)
@@ -474,6 +437,7 @@ class MyBot(commands.Cog):
 
     @app_commands.command(name='yeet')
     async def yeet(self, interaction: discord.Interaction):
+        """Deletes the current game"""
         gid = interaction.guild_id or 0
         if gid not in games:
             await interaction.response.send_message('No game.', ephemeral=True)
@@ -517,6 +481,7 @@ async def setup(self):
 @app_commands.command(name='kick')
 @app_commands.describe(user='User to kick from the game')
 async def kick(self, interaction: discord.Interaction, user: discord.Member):
+    """Kick a player from the lobby"""
     gid = interaction.guild_id or 0
     if gid not in games:
         await interaction.response.send_message('No game in progress.', ephemeral=True)
@@ -535,59 +500,3 @@ async def kick(self, interaction: discord.Interaction, user: discord.Member):
     else:
         await interaction.response.send_message('User not in game or cannot be kicked.', ephemeral=True)
 
-@app_commands.command(name='cc')  # Transfer captaincy
-@app_commands.describe(new_captain='Member to transfer captaincy to')
-async def cc(self, interaction: discord.Interaction, new_captain: discord.Member):
-    """Transfer your team captaincy to another team member."""
-    gid = interaction.guild_id or 0
-    if gid not in games:
-        await interaction.response.send_message('No lobby/game.', ephemeral=True)
-        return
-    gs = games[gid]
-    caller_team = None
-    for tid, team in gs.teams.items():
-        if team.captain_id == interaction.user.id:
-            caller_team = tid
-            break
-    if caller_team is None:
-        await interaction.response.send_message('You are not a captain on any team.', ephemeral=True)
-        return
-    # ensure target is on the same team
-    if gs.find_team_of_user(new_captain.id) != caller_team:
-        await interaction.response.send_message('Target user is not on your team.', ephemeral=True)
-        return
-    gs.teams[caller_team].captain_id = new_captain.id
-    save_game(gid, gs)
-    await interaction.response.send_message(f'{new_captain.display_name} is now captain of Team {caller_team}.')
-
-@app_commands.command(name='start')
-async def start(self, interaction: discord.Interaction):
-    gid = interaction.guild_id or 0
-    if gid not in games:
-        await interaction.response.send_message('No lobby.', ephemeral=True)
-        return
-    gs = games[gid]
-    ok = gs.start_game(interaction.user.id)
-    if not ok:
-        await interaction.response.send_message('Only host can start the game or teams are not filled.', ephemeral=True)
-        return
-    save_game(gid, gs)
-    await interaction.response.send_message('Game started! Use `/toss` to begin coin toss.')
-
-@app_commands.command(name='join')
-async def join(self, interaction: discord.Interaction):
-    gid = interaction.guild_id or 0
-    if gid not in games:
-        await interaction.response.send_message('No lobby created. Use `/newgame` to create one.', ephemeral=True)
-        return
-    gs = games[gid]
-    # Check if the lobby already has 6 players
-    if len(gs.players) >= 6:
-        await interaction.response.send_message('Lobby is full .', ephemeral=True)
-        return
-    res = gs.join_player(interaction.user.id, interaction.user.display_name)
-    if not res:
-        await interaction.response.send_message('Could not join, maybe you have already joined, or the lobby is full.', ephemeral=True)
-        return
-    save_game(gid, gs)
-    await interaction.response.send_message(f'Joined as {res}.')
